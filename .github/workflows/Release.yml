@@ -1,0 +1,74 @@
+name: Release Compilation
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            runtime: linux-x64
+          - os: macos-latest
+            runtime: osx-x64
+          - os: windows-latest
+            runtime: win-x64
+          - os: windows-latest
+            runtime: win-arm64
+          - os: macos-latest
+            runtime: osx-arm64
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: '9.x'
+        
+    - name: Build AOT
+      run: |
+        dotnet publish -c Release -r ${{ matrix.runtime }} -p:PublishAot=true -o out/aot/${{ matrix.runtime }}
+      timeout-minutes: 10 
+      env:
+        DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+    - name: Build Self-contained
+      run: |
+        dotnet publish -c Release -r ${{ matrix.runtime }} -p:PublishSingleFile=true -p:SelfContained=true -p:PublishReadyToRun=true -o out/self-contained/${{ matrix.runtime }}
+      timeout-minutes: 10 
+      env:
+        DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+    - name: Build Framework-dependent
+      run: |
+        dotnet --version
+        dotnet publish -c Release -r ${{ matrix.runtime }} -p:PublishSingleFile=true -p:SelfContained=false -o out/framework-dependent/${{ matrix.runtime }}
+      timeout-minutes: 10 
+
+    - name: Zip the build output
+      run: |
+        if ("${{ runner.os }}" -eq "Windows") {
+          Compress-Archive -Path "out/aot/${{ matrix.runtime }}/*" -DestinationPath "out/aot-${{ matrix.runtime }}.zip"
+          Compress-Archive -Path "out/self-contained/${{ matrix.runtime }}/*" -DestinationPath "out/selfcontained-${{ matrix.runtime }}.zip"
+          Compress-Archive -Path "out/framework-dependent/${{ matrix.runtime }}/*" -DestinationPath "out/framework-${{ matrix.runtime }}.zip"
+        } else {
+          zip -r "out/aot-${{ matrix.runtime }}.zip" "out/aot/${{ matrix.runtime }}"
+          zip -r "out/selfcontained-${{ matrix.runtime }}.zip" "out/self-contained/${{ matrix.runtime }}"
+          zip -r "out/framework-${{ matrix.runtime }}.zip" "out/framework-dependent/${{ matrix.runtime }}"
+        }
+      timeout-minutes: 5
+      shell: pwsh
+      
+    - name: Upload
+      uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.MY_TOKEN }}
+      with:
+        files: |
+          out/*.zip
